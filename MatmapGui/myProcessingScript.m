@@ -805,15 +805,15 @@ function runScript(handle)
 %       mpd.LI, ALIGNSTART, ALIGNSIZE
 %   - starts the MAIN LOOP: for each file:  Process file
 %   - at very end when everything is processed: update figure and groups
-%       
+%    
+    clear global XXX  % autofid
     global myScriptData
     saveSettings();
     
     loadMyProcessingData;  
     saveSettings
-    h = [];   %for waitbar
-%     olddir =pwd;      %why?     seems not important TODO
-%     cd(myScriptData.PWD); 
+    h = [];   
+    
     PreLoopScript;
     saveSettings(handle);
 
@@ -850,7 +850,8 @@ function runScript(handle)
         end
         
         
-        ProcessACQFile(myScriptData.ACQFILENAME{acqfiles(p)},myScriptData.ACQDIR);
+        fullAutoFiducializing(myScriptData.ACQFILENAME{acqfiles(p)},myScriptData.ACQDIR)
+        %ProcessACQFile(myScriptData.ACQFILENAME{acqfiles(p)},myScriptData.ACQDIR);
         
         switch myScriptData.NAVIGATION
             case 'prev'

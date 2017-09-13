@@ -1,6 +1,5 @@
 function test
 
-a={1 2 3};
-b={'a', 5 6};
+x = { 1 2 3 'a' 'b' [1 2] 10};
 
-x=[a b]
+b=x(end+1-3:end)

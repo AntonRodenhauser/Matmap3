@@ -1,4 +1,4 @@
-function fullAutoFiducializingOfFile(inputfilename,inputfiledir)
+function fullAutoFiducializing(inputfilename,inputfiledir)
 % this function will replace the 'processAcq' function in the main loop of myProcessing Script
 
 global myScriptData TS XXX
@@ -7,25 +7,20 @@ global myScriptData TS XXX
 %%%% set up stuff for testing %%%   stuff that will be removed later on
 XXX.RunToStartWith = '0137';
 XXX.pathToProcessed = '/usr/sci/cibc/Maprodxn/InSitu/17-06-30/Data/Processed'; 
+XXX.pathToPreprocessed = '/usr/sci/cibc/Maprodxn/InSitu/17-06-30/Data/Preprocessed';
 
 XXX.FiducialTypes = [2 4 5 7 6];   % the fiducial to process
 XXX.nTimeFramesOfOneSearch = 10000;
 
 
+
+%%%%%%%%%%%%%%%% here aktuall stuff starts %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
 %%%% if XXX not set up, set it up now
-if ~isfield(XXX,'settedUp')
-    XXX.settedUp = 1;
+if ~isfield(XXX,'firstTime')
+    XXX.firstTime = 1;
     setUpStuff
 end
-
-
-
-%%%% get the template beat for autofiducializing
-if XXX.FirstFile % if first time, no templates set yet
-    getTemplates    
-    XXX.FirstFile = 0;
-end
-
 
 
 %%%% load file into TS, 
@@ -35,30 +30,25 @@ TSidx = loadAndPreprocessFiles(inputfilename,inputfiledir);
 RMS=rms(TS{TSidx}.potvals(XXX.leadsOfAllGroups,:),1);
 RMS=RMS-min(RMS);
 
-RMSidx = tsNew;
-TS{RMSidx} = RMS;
 
 
 
 
 %%%% get the search areas in current file (the start/end idx in ts to search for beats
-nTFprev = nTFcur;   %number of Timeframes in prev and cur ts
-nTFcur = size(TS{curTSindex}.potvals,2);
-
+nTF = size(TS{TSidx}.potvals,2);  % number of timeframes in in current TS
+searchAreas ={};
 startIdx = 1;
 endIdx = XXX.nTimeFramesPerSearch;
-if XXX.nTimeFramesPerSearch > nTFcur
-    while endIdx < nTFcur
-        searchAreas{end+1} = [startIdx, endIdx];
 
-        startIdx = startIdx + XXX.nTimeFramesPerSearch;
-        endIdx = endIdx + XXX.nTimeFramesPerSearch;
-    end
-    endIdx = XXX.nTimeFramesPerSearch;
+while endIdx < nTF
     searchAreas{end+1} = [startIdx, endIdx];
-else  % if nFrames is less then nTimeFramesPerSearch => if file is to short to be splitted in intervals
-    searchAreas{end+1} = [1, nTFcur];
+
+    startIdx = startIdx + XXX.nTimeFramesPerSearch;
+    endIdx = endIdx + XXX.nTimeFramesPerSearch;
 end
+endIdx = nTF;
+searchAreas{end+1} = [startIdx, endIdx];
+
 % searchAreas ={[1, nTimeFramesPersSeach],[nTimeFramesPersSeach+1, 2*nTimeFramesPersSeach], ... ,[ (n-1)*nTimeFramesPersSeach, nTF] },    the intervals were beats are searched for.
 % searchAreas are the indeces in the current potvals that are searched
 
@@ -68,19 +58,31 @@ allFids = {};
 allBeats = {};
 for searchAreaIdx = 1:length(searchAreas)
     
-    %%%% update beatKernel,fidKernels,locFidValues  based on the last nBeatsToAverage fiducialized beats of last searchArea
-    if XXX.updateTemplates    % if the last interval (possibly from previous file) had less then nBeatsToAverage beats, dont upgrade template
-        updateTemplates    % update beatTemplate and fidTemplate
-    end
-
-
-    
-    %%%% now fiducialize searchArea: get fidsOfSearchArea and beatsOfSearchArea based on beatKernel,fidKernels,locFidValues
+    %%%% get the limmited potvals of that area, 
     searchStartIdx = searchAreas{searchAreaIdx}(1);
     searchEndIdx = searchAreas{searchAreaIdx}(2);
     searchAreaTimeFrames = searchStartIdx:searchEndIdx;
-    potvalsToInvestigate = potvals(XXX.leadsToAutoprocess,searchAreaTimeFrames);
-    [fidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(potvalsToInvestigate,RMS,beatKernel,fidKernels,locFidValues);
+    limPotvals = TS{TSidx}.potvals(XXX.leadsToAutoprocess,searchAreaTimeFrames);
+    
+    
+    %%%% get templates from userdata, if it is first time 
+    if XXX.firstTime % if it is the first file and first area frame to autoprocess
+        [XXX.beatKernel,XXX.fidKernels,XXX.locFidValues] = getTemplates; 
+        XXX.firstTime = 0;
+    end
+
+    
+    %%%% now fiducialize searchArea: get fidsOfSearchArea and beatsOfSearchArea based on beatKernel,fidKernels,locFidValues
+    [fidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(limPotvals,RMS,XXX.beatKernel,XXX.fidKernels,XXX.locFidValues);
+    
+    
+    %%%%% update templates based on lastFoundFids and lastFoundBeats
+    if length(beatsOfSearchArea) > XXX.numBeatsToAverageOver  % if enough beats in searchArea (e.g. if not only small searchArea at end of file)
+        lastFoundFids = fidsOfSearchArea(end+1-XXX.numBeatsToAverageOver : end);
+        lastFoundBeats = beatsOfSearchArea(end+1-XXX.numBeatsToAverageOver : end);
+        
+        [XXX.beatKernel,XXX.fidKernels,XXX.locFidValues] = updateTemplates(limPotvals,RMS, lastFoundFids, lastFoundBeats);
+    end
     
     
     
@@ -125,28 +127,29 @@ global  myScriptData XXX
 
 %%%% set up stuff
 
-totalKernelLength = 2 * myScriptData.fidsKernelLength +1;   % the length of a kernel
-fidsTypes=[2 4 5 7 6];   % oder here is important: start of a wave must be imediatly followed by end of same wave. otherwise FidsToEvents failes.
+totalKernelLength = 2 * myScriptData.FIDSKERNELLENGTH +1;   % the length of a kernel
+fidTypes=XXX.fidTypes;   % oder here is important: start of a wave must be imediatly followed by end of same wave. otherwise FidsToEvents failes.
 
 
-%%%% load the ts to get the first templates from it
+%%%% load the tsTempl and the tsUnproc to get the first templates from it
 pathToProcessed = XXX.pathToProcessed;
-fullPathToTemplateFile = [pathToProcessed 'Run' XXX.RunToStartWith '-ns.mat'];
+pathToPreprocessed =XXX.pathToPreprocessed;
+fullPathToTemplateFile = fullfile(pathToProcessed,['Run' XXX.RunToStartWith '-ns.mat']);
 load(fullPathToTemplateFile)
 
 
 %%%% get beatKernel
-bsk = ts.selframes(1);
-bek = ts.selframes(2);
+bsk = tsTempl.selframes(1);
+bek = tsTempl.selframes(2);
 
-RMS=rms(ts.potvals(XXX.leadsOfAllGroups,:),1);
+RMS=rms(tsTempl.potvals(XXX.leadsOfAllGroups,:),1);
 RMS=RMS-min(RMS);
 
 beatKernel = RMS(bsk:bek);
 
 
 %%%% get oriFids and remove everything but global fids from it
-oriFids=ts.fids;
+oriFids=tsTempl.fids;
 toBeCleared=[];
 for p=1:length(oriFids)
     if length(oriFids(p).value)~=1   % if not single global value
@@ -157,7 +160,7 @@ oriFids(toBeCleared)=[];
 
 
 %%%% get locFidValues in the "beat frame" from oriFids
-for fidType = fidsTypes
+for fidType = fidTypes
     locFidValue = round(oriFids([oriFids.type]==fidType).value);
     locFidValues(end+1) = locFidValue;
 end
@@ -170,15 +173,94 @@ globFidsValues = locFidValues + bsk-1;
 fsk=globFidsValues-fidsKernelLength+kernel_shift;   % fiducial start kernel,  the index in potvals where the kernel for fiducials starts
 fek=globFidsValues+fidsKernelLength+kernel_shift;   % analog to fsk, but 'end'
 
-nFids=length(fidsTypes);
-potvals = ts.potvals(XXX.leadsToAutoprocess,:);   % only get kernels for leadsToAutoprocess
+nFids=length(fidTypes);
+potvals = tsTempl.potvals(XXX.leadsToAutoprocess,:);   % only get kernels for leadsToAutoprocess
 nLeads=size(potvals,1);
 fidKernels = zeros(nLeads,totalKernelLength, nFids);
 for fidNumber = 1:nFids
     fidKernels(:,:,fidNumber) = potvals(:,fsk(fidNumber):fek(fidNumber));
 end
 % fidKernels is now nLeads x nTimeFramesOfKernel x nFids array containing all kernels for each lead for each fiducial
-% example: kernel(3,:,5)  is kernel for the 3rd lead and the 5th fiducial (in fidsTypes)
+% example: kernel(3,:,5)  is kernel for the 3rd lead and the 5th fiducial (in fidTypes)
+
+
+
+function [beatKernel,fidKernels,locFidValues] = updateTemplates(limPotvals,RMS, lastFoundFids, lastFoundBeats)
+% returns: 
+% - fidKernels, a nLeads x nTimeFramesOfKernel x nFids array containing all kernels for each lead for each fiducial
+%   example: kernel(3,:,5)  is kernel for the 3rd lead and the 5th fiducial (in fidTypes)
+% - beatKernel:  the new kernel to find beat in RMS
+% - locFidValues: the values where to search for fids in local 'beat frame' of beatKernel
+
+% inputs:
+% - lastFoundFids: the subset of the last nBeats2avrg beats in allFids:    allFids(currentBeat-mBeats2avrg : currentBeat)
+% - lastFoundBeats:  the subset of .beats of the last nBeat2avrg:  beats(currentBeat-mBeats2avrg : currentBeat)
+% - limPotvals:   limmitted potvals, limPotvals = FullPotvals(framesOfSearchArea, leadsToAutoprocess)
+
+
+global myScriptData XXX
+
+
+
+%%%% set up some stuff
+nBeats2avrg = length(lastFoundFids);  % how many beats to average over?
+totalKernelLength = 2*XXX.FIDSKERNELLENGTH +1;   % the length of a kernel
+nFids =length(lastFoundFids{1}) / 2;   % how many fids? divide by 2 because there are local and global fids
+nLeads =size(1,limPotvals); % how many leads in potvals? 
+
+prevBeatLength = 1 + lastFoundBeats{1}(2) - lastFoundBeats{1}(1);   % the length of previous beats
+
+
+
+%%%% first get the new local fids to be found as average of the last nBeats2average beats
+allLocalFids = zeros(nBeats2avrg,nFids);   % fids in local "beat frame". 
+for beatNum = 1:nBeats2avrg % for each entry in lastFoundFids
+    allLocalFids(beatNum,:) = [lastFoundFids{beatNum}(nFids+1:2*nFids).value];   % store the global fids of the already processed beats in allLocFids
+end
+% now get the average
+locFidValues = mean(allLocalFids,1);  % the new averaged local fid values in 'old beatKernel frame'
+
+%%%% now average the potential values of the last nBeats2average beats for each lead
+allBeatsToAvrg = zeros(nLeads,prevBeatLength,nBeats2avrg);
+for beatNum = 1:nBeats2avrg
+    timeFramesOfBeat = lastFoundBeats{beatNum}(1):lastFoundBeats{beatNum}(2);
+    allBeatsToAvrg(:,:,beatNum) = limPotvals(:,timeFramesOfBeat);
+end
+% now average over the beats
+avrgdPotvalsOfBeat = mean(allBeatsToAvrg, 3);  % averaged individual leads
+
+
+
+%%%% now that we have avrgdPtovalsOfBeat and locAvrgdFids, get the new fidKernels
+fsk=locFidValues-fidsKernelLength+kernel_shift;   % fiducial start kernel,  the index in avrgdPotvalsOfBeat where the kernel for fiducials starts
+fek=locFidValues+fidsKernelLength+kernel_shift;   % analog to fsk, but 'end'
+
+fidKernels = zeros(nLeads,totalKernelLength, nFids);
+for fidNumber = 1:nFids
+    fidKernels(:,:,fidNumber) = avrgdPotvalsOfBeat(:,fsk(fidNumber):fek(fidNumber));
+end
+
+
+%%%% get the new beatKernel %%%%%%%%%%
+
+%%%% first get the new beatStart/EndPoints (length of beat changes..)
+qrsStartVal = locFidValus(XXX.fidTypes == 2);
+tEndVal = locFidValus(XXX.fidTypes == 7);
+
+beatStartShift = qrsStartVal - XXX.distanceFromFid;
+beatEndShift = tEndVal + XXX.distanceFromFid;
+
+%%%%% average RMS over the last nBeats2avrg
+allRMSbeats = zeros(nBeatsToAvrg,prevBeatLength);
+for beatNum = 1:nBeats2avrg
+    newStartIdx = lastFoundBeats{beatNum}(1) + beatStartShift;   % to do: make sure these values dont get out of RMS range
+    newEndIdx = lastFoundBeats{beatNum}(2) + beatEndShift;
+    allRMSbeats(beatNum,:) = RMS(newStartIdx:newEndIdx);
+end
+beatKernel = mean(allRMSbeats,1);
+
+%%%% put the locFidValues from 'old beatKernel frame' in 'new beatKernel frame'
+locFidValues = locFidValues - beatStartShift;
 
 
 
@@ -188,35 +270,21 @@ end
 
 
 
-function updateTemplates
-% get a new beatTemplate (fids and beatkernel) based on the last XXX.NumToAverageOver beats
+
 
 
 
 function setUpStuff
 global XXX myScriptData
 
-XXX.beatInterval = 30;    % after how many beats should template be updated? 
-XXX.numToAverageOver = 5;  % how many beats to average over to get new beat template?
+XXX.numBeatsToAverageOver = 5;  % how many beats to average over to get new beat template?
 XXX.nTimeFramesPerSearch = 10000; % update templates after every nTimeFramesPersSeach time frames
 
-XXX.lastProcTimeFrameLastFile =[]; 
-XXX.startTimeFrameCurFile = 1;
-XXX.endTimeFrameCurFile = 1;
+XXX.fidTypes =[2 4 5 7 6]; % the fids to be found. start of wave must follow end of wave
 
-XXX.overlapWithPrev = 0;
-XXX.overlapWithNext = 0;
+XXX.distanceFromFid = 50;    % newBeatStartIdx = startOfQRS - distanceFromFid,  newBeatEndIdx = endOfTwave + distanceFromFid,  
 
-XXX.beatsPrev = {};
-XXX.beatsCurr = {};
-
-XXX.beatsPrevStartIdx = 0;
-XXX.beatsCurStartIdx = 0;
-XXX.beatsCurEndIdx = 0;
-
-
-
-
+XXX.updateTemplates = 0;   % dont update at beginning, 
 
 
 %%%% get the leadsOfAllGroups and filter out badleads
@@ -224,7 +292,7 @@ crg=myScriptData.CURRENTRUNGROUP;
 badleads=myScriptData.GBADLEADS{crg};     % the global indices of bad leads
 leadsOfAllGroups=[myScriptData.GROUPLEADS{crg}{:}];
 leadsOfAllGroups=setdiff(leadsOfAllGroups,badleads);  % signal (where the beat is found) will constitute of those.  got rid of badleads
-XXX.leadsOfAllGroups = leadsOfAllGroupsOfAllGroups;  % whenever an RMS is needed, it will consist only of these leadsOfAllgroups
+XXX.leadsOfAllGroups = leadsOfAllGroups;  % whenever an RMS is needed, it will consist only of these leadsOfAllgroups
 
 
 %%%% set leadsToAutoprocess, the leads to find fiducials for and plot.  Only these leads will be used to compute the global fids
@@ -320,7 +388,8 @@ end
 function [FidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(potvals,RMS,beatKernel,fidKernels,locFidValues)
 
 %%%%% get paramters from myScriptData
-global myScriptData
+global myScriptData XXX
+
 
 accuracy=myScriptData.ACCURACY;  % abort condition5
 fidsKernelLength=myScriptData.FIDSKERNELLENGTH;  % the kernel indices will be from fidsValue-fidsKernelLength  until fidsValue+fidsKernelLength
@@ -329,7 +398,7 @@ kernel_shift=0;       % a "kernel shift", to shift the kernel by kernel_shift   
 window_width=myScriptData.WINDOW_WIDTH;   % dont search complete beat, but only a window with width window_width,
 % ws=bs+loc_fidsValues(fidNumber)-window_width;  
 % we=bs+loc_fidsValues(fidNumber)+window_width;
-
+fidTypes = XXX.fidTypes;
 
 %%%%% find the beats
 beatsOfSearchArea=findMatches(RMS, beatKernel, accuracy);
@@ -363,13 +432,13 @@ for beatNumber=1:nBeats %for each beat
 
 
         %%%% put the found newIndivFids in FidsOfSearchArea
-        FidsOfSearchArea{beatNumber}(fidNumber).type=fidsTypes(fidNumber);
+        FidsOfSearchArea{beatNumber}(fidNumber).type=fidTypes(fidNumber);
         FidsOfSearchArea{beatNumber}(fidNumber).value=indivFids;
         FidsOfSearchArea{beatNumber}(fidNumber).variance=variance;
 
 
         %%%% add the global fid to FidsOfSearchArea
-        FidsOfSearchArea{beatNumber}(nFids+fidNumber).type=fidsTypes(fidNumber);
+        FidsOfSearchArea{beatNumber}(nFids+fidNumber).type=fidTypes(fidNumber);
         FidsOfSearchArea{beatNumber}(nFids+fidNumber).value=globFid; 
     end
     if isgraphics(h), waitbar(beatNumber/nBeats,h), end
