@@ -1,6 +1,6 @@
 function TSindices = tsNew(number)
 %  if TS={[], ts1, ts2, [], []},   then tsNew(3) returns [1,4,5], tsNew(1)
-%  returns 1.    this functin doesnt change TS in any way.
+%  returns 1.    this functin doesnt change TS in any way (exept sometimes append empty slot at the end)
 
 
 

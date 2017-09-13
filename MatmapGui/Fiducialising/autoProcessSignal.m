@@ -254,7 +254,6 @@ if myScriptData.DO_INTEGRALMAPS == 1
 end
        
 %%%%% Do activation maps   
-
 if myScriptData.DO_ACTIVATIONMAPS == 1
     if myScriptData.DO_DETECT == 0 % 'Detect fiducials must be selected'
         error('Need fiducials to do activation maps');
