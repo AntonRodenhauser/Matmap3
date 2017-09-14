@@ -10,7 +10,7 @@ XXX.pathToProcessed = '/usr/sci/cibc/Maprodxn/InSitu/17-06-30/Data/Processed';
 XXX.pathToPreprocessed = '/usr/sci/cibc/Maprodxn/InSitu/17-06-30/Data/Preprocessed';
 
 XXX.FiducialTypes = [2 4 5 7 6];   % the fiducial to process
-XXX.nTimeFramesOfOneSearch = 10000;
+XXX.nTimeFramesOfOneSearch = 3000;
 
 
 
@@ -494,6 +494,14 @@ for fidNumber=1:length(fids)
 end
 if isfield(fids,'variance'),  fids=rmfield(fids,'variance'); end  %variance not wanted in the output
 TS{newBeatIdx}.fids=fids;
+
+%%%%%% if 'blank bad leads' button is selected,   set all values of the bad leads to 0   
+if myScriptData.DO_BLANKBADLEADS == 1
+    badleads = tsIsBad(newBeatIdx);
+    TS{newBeatIdx}.potvals(badleads,:) = 0;
+    tsSetBlank(newBeatIdx,badleads);
+    tsAddAudit(newBeatIdx,'|Blanked out bad leads');
+end
 
 
 %%%%  baseline correction
