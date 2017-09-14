@@ -65,7 +65,8 @@ for searchAreaIdx = 1:length(searchAreas)
     searchStartIdx = searchAreas{searchAreaIdx}(1);
     searchEndIdx = searchAreas{searchAreaIdx}(2);
     searchAreaTimeFrames = searchStartIdx:searchEndIdx;
-    limPotvals = TS{curTSidx}.potvals(XXX.leadsToAutoprocess,searchAreaTimeFrames);
+    limPotvalsOfSearchArea = TS{curTSidx}.potvals(XXX.leadsToAutoprocess,searchAreaTimeFrames);
+    RMSofSearchArea = RMS(searchAreaTimeFrames);
     
     
     %%%% get templates from userdata, if it is first time 
@@ -76,7 +77,7 @@ for searchAreaIdx = 1:length(searchAreas)
 
     
     %%%% now fiducialize searchArea: get fidsOfSearchArea and beatsOfSearchArea based on beatKernel,fidKernels,locFidValues
-    [fidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(limPotvals,RMS,XXX.beatKernel,XXX.fidKernels,XXX.locFidValues);
+    [fidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(limPotvalsOfSearchArea,RMSofSearchArea,XXX.beatKernel,XXX.fidKernels,XXX.locFidValues);
  
     
     %%%%% update templates based on lastFoundFids and lastFoundBeats
@@ -84,14 +85,14 @@ for searchAreaIdx = 1:length(searchAreas)
         lastFoundFids = fidsOfSearchArea(end+1-XXX.numBeatsToAverageOver : end);
         lastFoundBeats = beatsOfSearchArea(end+1-XXX.numBeatsToAverageOver : end);
         
-        [XXX.beatKernel,XXX.fidKernels,XXX.locFidValues] = updateTemplates(limPotvals,RMS, lastFoundFids, lastFoundBeats);
+        [XXX.beatKernel,XXX.fidKernels,XXX.locFidValues] = updateTemplates(limPotvalsOfSearchArea,RMSofSearchArea, lastFoundFids, lastFoundBeats);
     end
     
     
     
     %%%% put fidsOfSearchArea and beatsOfSearchArea from 'search area frame' in 'complete Run frame' by adding searchStartIdx
     for beatNumber = 1:length(fidsOfSearchArea)
-        for fidNumber = 1:length(fidsOfSearchArea{beatNumber}.value)
+        for fidNumber = 1:length(fidsOfSearchArea{beatNumber})
             fidsOfSearchArea{beatNumber}(fidNumber).value = fidsOfSearchArea{beatNumber}(fidNumber).value + searchStartIdx - 1;
         end
         beatsOfSearchArea{beatNumber} = beatsOfSearchArea{beatNumber} + searchStartIdx - 1;
@@ -193,7 +194,7 @@ end
 
 
 
-function [beatKernel,fidKernels,locFidValues] = updateTemplates(limPotvals,RMS, lastFoundFids, lastFoundBeats)
+function [beatKernel,fidKernels,locFidValues] = updateTemplates(limPotvals,RMSofSearchArea, lastFoundFids, lastFoundBeats)
 % returns: 
 % - fidKernels, a nLeads x nTimeFramesOfKernel x nFids array containing all kernels for each lead for each fiducial
 %   example: kernel(3,:,5)  is kernel for the 3rd lead and the 5th fiducial (in fidTypes)
@@ -258,19 +259,23 @@ end
 %%%% get the new beatKernel %%%%%%%%%%
 
 %%%% first get the new beatStart/EndPoints (length of beat changes..)
-qrsStartVal = locFidValus(XXX.fidTypes == 2);
-tEndVal = locFidValus(XXX.fidTypes == 7);
+qrsStartVal = locFidValues(XXX.fidTypes == 2);
+tEndVal = locFidValues(XXX.fidTypes == 7);
+
+
 
 beatStartShift = qrsStartVal - XXX.distanceFromFid;
-beatEndShift = tEndVal + XXX.distanceFromFid;
+beatEndShift = (tEndVal + XXX.distanceFromFid) - prevBeatLength;
+newBeatLength = prevBeatLength - beatStartShift + beatEndShift;
 
 %%%%% average RMS over the last nBeats2avrg
-allRMSbeats = zeros(nBeatsToAvrg,prevBeatLength);
+allRMSbeats = zeros(nBeats2avrg,newBeatLength);
 for beatNum = 1:nBeats2avrg
-    newStartIdx = lastFoundBeats{beatNum}(1) + beatStartShift;   % to do: make sure these values dont get out of RMS range
+    newStartIdx = lastFoundBeats{beatNum}(1) + beatStartShift;   % to do: make sure these values dont get out of RMS range during last loop
     newEndIdx = lastFoundBeats{beatNum}(2) + beatEndShift;
-    allRMSbeats(beatNum,:) = RMS(newStartIdx:newEndIdx);
+    allRMSbeats(beatNum,:) = RMSofSearchArea(newStartIdx:newEndIdx);
 end
+
 beatKernel = mean(allRMSbeats,1);
 
 %%%% put the locFidValues from 'old beatKernel frame' in 'new beatKernel frame'
@@ -296,7 +301,7 @@ XXX.nTimeFramesPerSearch = 10000; % update templates after every nTimeFramesPers
 
 XXX.fidTypes =[2 4 5 7 6]; % the fids to be found. start of wave must follow end of wave
 
-XXX.distanceFromFid = 50;    % newBeatStartIdx = startOfQRS - distanceFromFid,  newBeatEndIdx = endOfTwave + distanceFromFid,  
+XXX.distanceFromFid = 30;    % newBeatStartIdx = startOfQRS - distanceFromFid,  newBeatEndIdx = endOfTwave + distanceFromFid,  
 
 XXX.updateTemplates = 0;   % dont update at beginning, 
 
@@ -399,7 +404,7 @@ if myScriptData.DO_FILTER      % if 'apply temporal filter' is selected
 end
 
 
-function [FidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(potvals,RMS,beatKernel,fidKernels,locFidValues)
+function [FidsOfSearchArea, beatsOfSearchArea] = fiducializeSearchArea(potvalsOfSearchArea,RMSofSearchArea,beatKernel,fidKernels,locFidValues)
 
 %%%%% get paramters from myScriptData
 global myScriptData XXX
@@ -416,7 +421,7 @@ fidTypes = XXX.fidTypes;
 
 %%%%% find the beats
 
-beatsOfSearchArea = findMatches(RMS, beatKernel, accuracy);
+beatsOfSearchArea = findMatches(RMSofSearchArea, beatKernel, accuracy);
 nBeats=length(beatsOfSearchArea);
 
 
@@ -428,6 +433,7 @@ defaultFid(nFids).type=[];
 
 %%%%%%%%%%%%% fill FidsOfSearchArea with values %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+
 h=waitbar(0/nBeats,'Autofiducialicing Beats..');
 for beatNumber=1:nBeats %for each beat
     bs=beatsOfSearchArea{beatNumber}(1);  % start of beat
@@ -436,7 +442,9 @@ for beatNumber=1:nBeats %for each beat
         %%%% set up windows
         ws=bs+locFidValues(fidNumber)-window_width;  % dont search complete beat, only around fid
         we=bs+locFidValues(fidNumber)+window_width;
-        windows=potvals(:,ws:we);        
+        windows=potvalsOfSearchArea(:,ws:we);
+
+            
         
         %%%% find fids
         [globFid, indivFids, variance] = findFid(windows,fidKernels(:,:,fidNumber),'normal');
@@ -501,8 +509,8 @@ end
 
 
 %%%%% do activation and deactivation
-if myScriptData.FIDSAUTOACT == 1, DetectActivation(newBeatIdx); end
-if myScriptData.FIDSAUTOREC == 1, DetectRecovery(newBeatIdx); end
+% if myScriptData.FIDSAUTOACT == 1, DetectActivation(newBeatIdx); end
+% if myScriptData.FIDSAUTOREC == 1, DetectRecovery(newBeatIdx); end
 
 
 
